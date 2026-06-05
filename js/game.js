@@ -23,7 +23,7 @@ const map = [
   '#..a.....M....m#',
   '#....##...##...#',
   '#...###.###....#',
-  '#...........P..#',
+  'D...........P..#',
   '#..##..##..##..#',
   '#....##..##....#',
   '#..M......m....#',
@@ -67,6 +67,9 @@ let monsterTypes = [];
 let monsterFiles = [];
 let lastFrame = performance.now();
 let loaded = false;
+let doorOpen = false;
+let doorPos = null; // {x: col, y: row}
+let xrayMode = false;
 
 const levelConfig = level => ({
   shots: 1 + Math.floor((level - 1) / 3),
@@ -92,7 +95,7 @@ function castRay(rayAngle) {
     const mapY = Math.floor(targetY / TILE);
     if (!map[mapY]) return { distance: MAX_DEPTH, hit: true };
     const cell = map[mapY][mapX];
-    if (cell === '#') {
+    if (cell === '#' || cell === 'D') {
       return { distance: depth, texture: '#', x: targetX, y: targetY };
     }
   }
@@ -110,9 +113,23 @@ function isWallBetween(fromX, fromY, toX, toY) {
     const checkY = fromY + dy * t;
     const mapX = Math.floor(checkX / TILE);
     const mapY = Math.floor(checkY / TILE);
-    if (map[mapY] && map[mapY][mapX] === '#') return true;
+    if (!map[mapY]) continue;
+    const cell = map[mapY][mapX];
+    if (cell === '#') return true;
+    if (cell === 'D' && !doorOpen) return true;
   }
   return false;
+}
+
+function findDoor() {
+  for (let y = 0; y < map.length; y++) {
+    for (let x = 0; x < map[y].length; x++) {
+      if (map[y][x] === 'D') {
+        doorPos = { x, y };
+        return;
+      }
+    }
+  }
 }
 
 function renderScene() {
@@ -153,7 +170,7 @@ function renderSprites() {
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
     if (Math.abs(diff) <= halfFOV + 0.4 && distance > 0.5) {
-      if (!isWallBetween(cx, cy, monster.x, monster.y)) {
+      if (xrayMode || !isWallBetween(cx, cy, monster.x, monster.y)) {
         visible.push({ monster, distance, diff, angleTo });
       }
     }
@@ -169,7 +186,9 @@ function renderSprites() {
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
     if (Math.abs(diff) <= halfFOV + 0.4 && distance > 0.6) {
-      visible.push({ item, distance, diff, angleTo });
+      if (xrayMode || !isWallBetween(cx, cy, item.x, item.y)) {
+        visible.push({ item, distance, diff, angleTo });
+      }
     }
   });
 
@@ -267,6 +286,11 @@ function drawItem(item, distance, diff) {
   const size = Math.min(80, (TILE * height) / (distance * TILE) * 0.8);
   const x = width / 2 + Math.tan(diff) * width - size / 2;
   const y = height / 2 - size / 2;
+  const shadowY = y + size * 0.3;
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+  ctx.beginPath();
+  ctx.ellipse(x + size / 2, shadowY + size * 0.15, size * 0.4, size * 0.08, 0, 0, Math.PI * 2);
+  ctx.fill();
   ctx.fillStyle = 'rgba(64, 200, 128, 0.92)';
   ctx.beginPath();
   ctx.arc(x + size / 2, y + size / 2, size / 2, 0, Math.PI * 2);
@@ -321,7 +345,11 @@ function strafePlayer(distance) {
 function collides(x, y) {
   const mapX = Math.floor(x / TILE);
   const mapY = Math.floor(y / TILE);
-  return map[mapY] && map[mapY][mapX] === '#';
+  if (!map[mapY]) return false;
+  const cell = map[mapY][mapX];
+  if (cell === '#') return true;
+  if (cell === 'D') return !doorOpen; // closed door blocks
+  return false;
 }
 
 function shootArrow() {
@@ -446,7 +474,15 @@ function initMonsters(data) {
     [6.3, 2.7], [9.5, 2.5], [12.2, 3.8], [4.3, 5.8], [11.5, 6.8], [7.8, 8.5], [2.9, 9.1], [10.8, 10.1],
     [13.1, 8.7], [5.0, 10.5], [12.0, 5.5], [8.5, 3.8], [3.2, 2.8], [9.2, 9.4], [4.8, 7.2], [13.5, 10.2]
   ];
-  monsters = spawnPoints.map((point, index) => {
+  // 벽 안의 스폰 포인트 제외
+  const validPoints = spawnPoints.filter(point => {
+    const mapX = Math.floor(point[0]);
+    const mapY = Math.floor(point[1]);
+    if (!map[mapY] || mapX < 0 || mapX >= map[mapY].length) return false;
+    const cell = map[mapY][mapX];
+    return cell !== '#' && cell !== 'D'; // 벽과 닫힌 문 제외
+  });
+  monsters = validPoints.map((point, index) => {
     const type = data[index % data.length];
     return {
       ...type,
@@ -499,6 +535,13 @@ window.addEventListener('keydown', event => {
   if (event.key === 's' || event.key === 'S') keys.s = true;
   if (event.key === 'a' || event.key === 'A') keys.a = true;
   if (event.key === 'd' || event.key === 'D') keys.d = true;
+  if (event.key === 'Escape') showEscapeModal();
+  if (event.key === 'e' || event.key === 'E') tryOpenDoor();
+  if (event.key === 'Tab') {
+    event.preventDefault();
+    xrayMode = !xrayMode;
+    message.textContent = xrayMode ? '✨ X-Ray 모드: ON' : '✨ X-Ray 모드: OFF';
+  }
 });
 window.addEventListener('keyup', event => {
   if (event.key === 'w' || event.key === 'W') keys.w = false;
@@ -569,6 +612,80 @@ function showGameOverModal() {
   modal.appendChild(content);
   document.body.appendChild(modal);
 }
+
+function showEscapeModal() {
+  // prevent multiple modals
+  if (document.getElementById('escape-modal')) return;
+  const modal = document.createElement('div');
+  modal.id = 'escape-modal';
+  modal.style.cssText = `
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.7);
+    display: flex; align-items: center; justify-content: center; z-index: 999;
+  `;
+  const content = document.createElement('div');
+  content.style.cssText = `
+    background: rgba(18,18,30,0.98); border-radius: 14px; padding: 36px; text-align: center; max-width: 480px; color: #dbeeff;
+  `;
+  content.innerHTML = `
+    <h2 style="font-size: 2rem; margin-bottom: 12px; color:#fff">게임 일시정지</h2>
+    <p style="margin-bottom: 24px;">게임을 다시 시작하시겠습니까?</p>
+  `;
+  const btnRestart = document.createElement('button');
+  btnRestart.textContent = '다시 시작';
+  btnRestart.style.cssText = `padding:12px 20px; margin:6px; background:#ff5555; color:#fff; border:none; border-radius:8px; cursor:pointer;`;
+  btnRestart.onclick = () => location.reload();
+  const btnContinue = document.createElement('button');
+  btnContinue.textContent = '계속';
+  btnContinue.style.cssText = `padding:12px 20px; margin:6px; background:#4caf50; color:#fff; border:none; border-radius:8px; cursor:pointer;`;
+  btnContinue.onclick = () => { modal.remove(); };
+  const btnExit = document.createElement('button');
+  btnExit.textContent = '종료';
+  btnExit.style.cssText = `padding:12px 20px; margin:6px; background:#666; color:#fff; border:none; border-radius:8px; cursor:pointer;`;
+  btnExit.onclick = () => location.reload();
+  content.appendChild(btnRestart);
+  content.appendChild(btnContinue);
+  content.appendChild(btnExit);
+  modal.appendChild(content);
+  document.body.appendChild(modal);
+}
+
+function tryOpenDoor() {
+  if (!doorPos) return;
+  const dx = player.x - (doorPos.x + 0.5) * TILE;
+  const dy = player.y - (doorPos.y + 0.5) * TILE;
+  const dist = Math.hypot(dx, dy);
+  if (dist < TILE * 1.1 && !doorOpen) {
+    // optional: check facing direction
+    openDoor();
+  }
+}
+
+function openDoor() {
+  if (!doorPos || doorOpen) return;
+  doorOpen = true;
+  // replace D with . in map string
+  const row = map[doorPos.y];
+  map[doorPos.y] = row.substring(0, doorPos.x) + '.' + row.substring(doorPos.x + 1);
+  message.textContent = '문을 열었습니다. 다음 스테이지로 이동합니다.';
+  setTimeout(() => goToNextStage(), 900);
+}
+
+function goToNextStage() {
+  player.level += 1;
+  player.arrows = [];
+  player.fireTime = 0;
+  player.firing = false;
+  // reset player position to start
+  player.x = 5.5 * TILE;
+  player.y = 6.5 * TILE;
+  // respawn monsters and pickups
+  if (monsterTypes && monsterTypes.length) initMonsters(monsterTypes);
+  initPickups();
+  message.textContent = `스테이지 이동: ${player.level}레벨`; 
+}
 window.onload = () => {
+  findDoor();
   loadMonsters();
 };
