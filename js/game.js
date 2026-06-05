@@ -55,6 +55,7 @@ const player = {
   fireTime: 0,
   firing: false,
   fireInterval: 0.28,
+  gameOver: false,
 };
 
 const keys = { w: false, a: false, s: false, d: false };
@@ -98,6 +99,22 @@ function castRay(rayAngle) {
   return { distance: MAX_DEPTH, texture: '.', x: player.x + cos * MAX_DEPTH * TILE, y: player.y + sin * MAX_DEPTH * TILE };
 }
 
+function isWallBetween(fromX, fromY, toX, toY) {
+  const dx = toX - fromX;
+  const dy = toY - fromY;
+  const dist = Math.hypot(dx, dy);
+  const stepCount = Math.ceil(dist / 20);
+  for (let i = 0; i <= stepCount; i++) {
+    const t = stepCount > 0 ? i / stepCount : 0;
+    const checkX = fromX + dx * t;
+    const checkY = fromY + dy * t;
+    const mapX = Math.floor(checkX / TILE);
+    const mapY = Math.floor(checkY / TILE);
+    if (map[mapY] && map[mapY][mapX] === '#') return true;
+  }
+  return false;
+}
+
 function renderScene() {
   ctx.fillStyle = '#05111a';
   ctx.fillRect(0, 0, width, height);
@@ -116,6 +133,7 @@ function renderScene() {
     ctx.fillRect(x, y, Math.ceil(width / NUM_RAYS), wallHeight);
   }
 
+  renderArrows();
   renderSprites();
   renderUI();
 }
@@ -135,7 +153,9 @@ function renderSprites() {
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
     if (Math.abs(diff) <= halfFOV + 0.4 && distance > 0.5) {
-      visible.push({ monster, distance, diff, angleTo });
+      if (!isWallBetween(cx, cy, monster.x, monster.y)) {
+        visible.push({ monster, distance, diff, angleTo });
+      }
     }
   });
 
@@ -160,16 +180,81 @@ function renderSprites() {
   });
 }
 
+function renderArrows() {
+  const cx = player.x;
+  const cy = player.y;
+  const halfFOV = FOV / 2;
+  player.arrows.forEach(arrow => {
+    const dx = arrow.x - cx;
+    const dy = arrow.y - cy;
+    const distance = Math.sqrt(dx * dx + dy * dy) / TILE;
+    const angleTo = Math.atan2(dy, dx);
+    let diff = angleTo - player.angle;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    if (Math.abs(diff) <= halfFOV + 0.4 && distance > 0.3) {
+      drawArrow(arrow, distance, diff);
+    }
+  });
+}
+
+function drawArrow(arrow, distance, diff) {
+  const maxPower = 40;
+  const powerRatio = Math.min(arrow.power / maxPower, 1);
+  const arrowSize = Math.min(60, (TILE * height) / (distance * TILE) * 0.4);
+  const thickness = 2 + powerRatio * 6;
+  const centerX = width / 2 + Math.tan(diff) * width;
+  const centerY = height / 2;
+  const color = {
+    r: Math.floor(100 + powerRatio * 155),
+    g: Math.floor(150 - powerRatio * 80),
+    b: Math.floor(255 - powerRatio * 100),
+  };
+  const glow = Math.floor(100 * powerRatio);
+  ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, 0.6)`;
+  ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, 0.8)`;
+  ctx.lineWidth = thickness;
+  const angle = arrow.angle;
+  ctx.save();
+  ctx.translate(centerX, centerY);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(-arrowSize / 2, 0);
+  ctx.lineTo(arrowSize / 2, 0);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(arrowSize / 2, 0);
+  ctx.lineTo(arrowSize / 2 - 8, -5);
+  ctx.lineTo(arrowSize / 2 - 8, 5);
+  ctx.fill();
+  if (glow > 0) {
+    ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${0.3 * (glow / 100)})`;
+    ctx.lineWidth = thickness + 4;
+    ctx.beginPath();
+    ctx.moveTo(-arrowSize / 2, 0);
+    ctx.lineTo(arrowSize / 2, 0);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawSprite(monster, distance, diff) {
   const spriteHeight = Math.min(400, (TILE * height) / (distance * TILE));
   const spriteWidth = spriteHeight * 0.75;
   const centerX = width / 2 + Math.tan(diff) * width;
   const px = centerX - spriteWidth / 2;
   const py = height / 2 - spriteHeight / 2;
-  const alpha = Math.max(0.08, 1 - distance / 10);
-
+  let alpha = Math.max(0.08, 1 - distance / 10);
+  if (monster.hitTime > 0) {
+    alpha = (monster.hitTime % 0.2) < 0.1 ? alpha : alpha * 0.4;
+  }
   ctx.fillStyle = `rgba(${monster.color.r},${monster.color.g},${monster.color.b},${alpha})`;
   ctx.fillRect(px, py, spriteWidth, spriteHeight);
+  if (monster.hitTime > 0) {
+    ctx.strokeStyle = 'rgba(255, 200, 100, 0.8)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(px - 4, py - 4, spriteWidth + 8, spriteHeight + 8);
+  }
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 18px system-ui';
   ctx.textAlign = 'center';
@@ -274,6 +359,7 @@ function updateArrows(delta) {
       const dy = monster.y - arrow.y;
       if (Math.hypot(dx, dy) < TILE * 0.35) {
         monster.health -= arrow.power;
+        monster.hitTime = 0.3;
         hit = true;
         if (monster.health <= 0) {
           player.xp += monster.baseXp;
@@ -288,6 +374,7 @@ function updateArrows(delta) {
 function updateMonsters(delta) {
   monsters.forEach(monster => {
     if (monster.health <= 0) return;
+    if (monster.hitTime > 0) monster.hitTime -= delta;
     const dx = player.x - monster.x;
     const dy = player.y - monster.y;
     const dist = Math.hypot(dx, dy);
@@ -300,11 +387,15 @@ function updateMonsters(delta) {
       if (!collides(monster.x, targetY)) monster.y = targetY;
     }
     if (dist < TILE * 0.85) {
-      player.health -= monster.damage * delta * 0.45;
+      if (!isWallBetween(monster.x, monster.y, player.x, player.y)) {
+        player.health -= monster.damage * delta * 0.45;
+      }
     }
-    if (player.health <= 0) {
+    if (player.health <= 0 && !player.gameOver) {
       player.health = 0;
-      message.textContent = '죽었습니다. 페이지를 새로 고침하여 재시작하세요.';
+      player.gameOver = true;
+      message.textContent = '❌ 게임 오버! 페이지를 새로 고침하여 재시작하세요.';
+      showGameOverModal();
     }
   });
   const needed = 20 + player.level * 15;
@@ -364,6 +455,7 @@ function initMonsters(data) {
       health: type.health,
       maxHealth: type.health,
       baseXp: Math.ceil(type.health / 10) + 6,
+      hitTime: 0,
     };
   });
 }
@@ -373,7 +465,7 @@ function loadMonsters() {
     .then(res => res.json())
     .then(manifest => {
       monsterFiles = manifest.files;
-      return Promise.all(monifest.files.map(file => fetch(`Monsters/${file}`).then(r => r.json())));
+      return Promise.all(manifest.files.map(file => fetch(`Monsters/${file}`).then(r => r.json())));
     })
     .then(types => {
       monsterTypes = types.map(type => ({
@@ -432,7 +524,51 @@ document.addEventListener('pointerlockchange', () => {
     message.textContent = '마우스가 잠겼습니다. WASD로 이동하고 좌클릭으로 연사하세요.';
   }
 });
-
+function showGameOverModal() {
+  const modal = document.createElement('div');
+  modal.style.cssText = `
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 999;
+  `;
+  const content = document.createElement('div');
+  content.style.cssText = `
+    background: rgba(20, 20, 40, 0.98);
+    border: 3px solid #ff4444;
+    border-radius: 20px;
+    padding: 60px;
+    text-align: center;
+    max-width: 500px;
+    box-shadow: 0 0 40px rgba(255, 68, 68, 0.5);
+  `;
+  content.innerHTML = `
+    <div style="font-size: 4rem; margin-bottom: 28px;">💀</div>
+    <h1 style="font-size: 3rem; color: #ff4444; margin-bottom: 20px; font-weight: bold;">게임 오버</h1>
+    <p style="font-size: 1.3rem; color: #b5d5ff; margin-bottom: 40px; line-height: 1.6;">
+      당신의 여정이 끝났습니다.<br>
+      다시 시도하시겠습니까?
+    </p>
+    <button onclick="location.reload()" style="
+      padding: 16px 48px;
+      font-size: 1.2rem;
+      background: linear-gradient(135deg, #ff4444, #cc0000);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: all 0.3s;
+      box-shadow: 0 0 20px rgba(255, 68, 68, 0.4);
+    " onmouseover="this.style.transform='scale(1.05)'; this.style.boxShadow='0 0 30px rgba(255, 68, 68, 0.7)';" 
+       onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 0 20px rgba(255, 68, 68, 0.4)';">재시작</button>
+  `;
+  modal.appendChild(content);
+  document.body.appendChild(modal);
+}
 window.onload = () => {
   loadMonsters();
 };
