@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Doom 스타일 궁수 던전</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="overlay" class="ui-panel">
+    <div id="stats">
+      <div>체력: <span id="health">100</span></div>
+      <div>레벨: <span id="level">1</span></div>
+      <div>활력: <span id="xp">0</span></div>
+      <div>남은 몬스터: <span id="remaining">0</span></div>
+      <div>동시 발사: <span id="arrowCount">1</span></div>
+      <div>화살 공격력: <span id="arrowPower">12</span></div>
+    </div>
+    <div id="message">클릭해서 시작하세요. WASD 이동 / 마우스 조준 / 좌클릭 화살</div>
+  </div>
+  <div id="blocker">
+    <div id="instructions">
+      <p>화면을 클릭하면 게임이 시작됩니다.</p>
+      <p>WASD 이동 · 마우스 조준 · 좌클릭 연속 발사</p>
+    </div>
+  </div>
+  <div id="loading">LOADING...</div>
+  <div id="crosshair">+</div>
+  <script type="module" src="js/game.js"></script>
+</body>
+</html>
